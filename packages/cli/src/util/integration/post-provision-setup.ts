@@ -16,6 +16,7 @@ export interface PostProvisionOptions {
   noConnect?: boolean;
   noEnvPull?: boolean;
   environments?: string[];
+  onProjectConnected?: (projectId: string) => void;
 }
 
 /**
@@ -97,6 +98,8 @@ export async function postProvisionSetup(
   output.log(
     `${chalk.bold(resourceName)} successfully connected to ${chalk.bold(project.name)}`
   );
+
+  options.onProjectConnected?.(project.id);
 
   if (!options.noEnvPull) {
     const pullExitCode = await pull(

@@ -1007,6 +1007,7 @@ const autoProvisionResponses: Record<
   },
   unknown: {
     kind: 'unknown',
+    reason: 'no_eligible_plan',
     url: 'https://vercel.com/acme/~/integrations/checkout/acme?productSlug=acme',
     integration: autoProvisionIntegration,
     product: autoProvisionProduct,

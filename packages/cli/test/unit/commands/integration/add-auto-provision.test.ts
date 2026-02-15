@@ -215,6 +215,34 @@ describe('integration add (auto-provision)', () => {
       expect(pullMock).not.toHaveBeenCalled();
     });
 
+    it('should track project_connected telemetry when connected to a project', async () => {
+      useProject({
+        ...defaultProject,
+        id: 'vercel-integration-add',
+        name: 'vercel-integration-add',
+      });
+      const cwd = setupUnitFixture('vercel-integration-add');
+      client.cwd = cwd;
+      client.setArgv('integration', 'add', 'acme');
+      const exitCodePromise = integrationCommand(client);
+
+      await expect(client.stderr).toOutput(
+        'Acme Product successfully provisioned: acme-gray-apple'
+      );
+
+      await exitCodePromise;
+
+      const connectedEvent = client.telemetryEventStore.readonlyEvents.find(
+        e => e.key === 'output:marketplace_project_connected'
+      );
+      expect(connectedEvent).toBeDefined();
+      expect(connectedEvent?.value).toContain(
+        '"project_id":"vercel-integration-add"'
+      );
+      expect(connectedEvent?.value).toContain('"resource_id":"resource_123"');
+      expect(connectedEvent?.value).toContain('"is_cli_auto_provision":true');
+    });
+
     it('should track telemetry', async () => {
       client.setArgv('integration', 'add', 'acme');
       const exitCodePromise = integrationCommand(client);
@@ -234,6 +262,24 @@ describe('integration add (auto-provision)', () => {
         {
           key: 'argument:integration',
           value: 'acme',
+        },
+        {
+          key: 'output:marketplace_install_flow_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_plan_selected',
+          value: expect.stringContaining(
+            '"plan_selection_method":"server_default"'
+          ),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_completed',
+          value: expect.stringContaining('"resource_id":"resource_123"'),
         },
       ]);
     });
@@ -266,6 +312,24 @@ describe('integration add (auto-provision)', () => {
         {
           key: 'argument:integration',
           value: 'acme',
+        },
+        {
+          key: 'output:marketplace_install_flow_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_plan_selected',
+          value: expect.stringContaining(
+            '"plan_selection_method":"server_default"'
+          ),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_completed',
+          value: expect.stringContaining('"resource_id":"resource_123"'),
         },
       ]);
     });
@@ -514,6 +578,107 @@ describe('integration add (auto-provision)', () => {
         JSON.stringify({ version: '5.4', region: 'pdx1' })
       );
       expect(parsed.searchParams.get('source')).toEqual('cli');
+    });
+
+    it('should track web_fallback telemetry with auto_provision_result_kind for metadata fallback', async () => {
+      useAutoProvision({ responseKey: 'metadata' });
+
+      client.setArgv('integration', 'add', 'acme');
+      const exitCodePromise = integrationCommand(client);
+
+      await expect(client.stderr).toOutput(
+        'Additional setup required. Opening browser...'
+      );
+
+      await exitCodePromise;
+
+      expect(client.telemetryEventStore).toHaveTelemetryEvents([
+        {
+          key: 'subcommand:add',
+          value: 'add',
+        },
+        {
+          key: 'argument:integration',
+          value: 'acme',
+        },
+        {
+          key: 'output:marketplace_install_flow_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_plan_selected',
+          value: expect.stringContaining(
+            '"plan_selection_method":"server_default"'
+          ),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_install_flow_web_fallback',
+          value: expect.stringContaining('"reason":"metadata_required"'),
+        },
+      ]);
+      // Also verify specific fields in the web_fallback event
+      const fallbackEvent = client.telemetryEventStore.readonlyEvents.find(
+        e => e.key === 'output:marketplace_install_flow_web_fallback'
+      );
+      expect(fallbackEvent?.value).toContain(
+        '"auto_provision_result_kind":"metadata"'
+      );
+    });
+
+    it('should track web_fallback telemetry with API reason for unknown result kind', async () => {
+      useAutoProvision({ responseKey: 'unknown' });
+
+      client.setArgv('integration', 'add', 'acme');
+      const exitCodePromise = integrationCommand(client);
+
+      await expect(client.stderr).toOutput(
+        'Additional setup required. Opening browser...'
+      );
+
+      await exitCodePromise;
+
+      expect(client.telemetryEventStore).toHaveTelemetryEvents([
+        {
+          key: 'subcommand:add',
+          value: 'add',
+        },
+        {
+          key: 'argument:integration',
+          value: 'acme',
+        },
+        {
+          key: 'output:marketplace_install_flow_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_plan_selected',
+          value: expect.stringContaining(
+            '"plan_selection_method":"server_default"'
+          ),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_install_flow_web_fallback',
+          value: expect.stringContaining('"reason":"no_eligible_plan"'),
+        },
+      ]);
+      // Also verify specific fields in the web_fallback event
+      const fallbackEvent = client.telemetryEventStore.readonlyEvents.find(
+        e => e.key === 'output:marketplace_install_flow_web_fallback'
+      );
+      expect(fallbackEvent?.value).toContain(
+        '"auto_provision_result_kind":"unknown"'
+      );
+      expect(fallbackEvent?.value).toContain(
+        '"auto_provision_result_reason":"no_eligible_plan"'
+      );
     });
 
     it('should open browser for unknown fallback without metadata in URL', async () => {

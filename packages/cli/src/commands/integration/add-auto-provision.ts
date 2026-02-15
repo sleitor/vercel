@@ -18,7 +18,10 @@ import {
   postProvisionSetup,
   type PostProvisionOptions,
 } from '../../util/integration/post-provision-setup';
-import { IntegrationAddTelemetryClient } from '../../util/telemetry/commands/integration/add';
+import {
+  IntegrationAddTelemetryClient,
+  type MarketplaceEventProperties,
+} from '../../util/telemetry/commands/integration/add';
 import {
   parseMetadataFlags,
   validateAndPrintRequiredMetadata,
@@ -115,6 +118,18 @@ export async function addAutoProvision(
   const product = productResult.value;
   const installations = installationsResult.value;
 
+  const marketplaceProps: MarketplaceEventProperties = {
+    integration_id: integration.id,
+    integration_slug: integration.slug,
+    integration_name: integration.name,
+    product_id: product.id,
+    product_slug: product.slug,
+    is_from_cli: true,
+    is_cli_auto_provision: true,
+  };
+
+  telemetry.trackInstallFlowStarted(marketplaceProps);
+
   output.log(
     `Installing ${chalk.bold(product.name)} by ${chalk.bold(integration.name)} under ${chalk.bold(contextName)}`
   );
@@ -132,6 +147,10 @@ export async function addAutoProvision(
   if (!teamInstallation) {
     const policies = await promptForTermAcceptance(client, integration);
     if (!policies) {
+      telemetry.trackInstallFlowWebFallback({
+        ...marketplaceProps,
+        reason: 'policy_declined',
+      });
       return 1;
     }
     acceptedPolicies = policies;
@@ -175,7 +194,17 @@ export async function addAutoProvision(
   output.debug(`Collected metadata: ${JSON.stringify(metadata)}`);
   output.debug(`Resource name: ${resourceName}`);
 
-  // 6. Provision resource
+  // 6. Track plan selection (server decides plan in auto-provision unless --plan flag)
+  telemetry.trackCheckoutPlanSelected({
+    ...marketplaceProps,
+    billing_plan_id: options.billingPlanId,
+    plan_selection_method: options.billingPlanId
+      ? 'cli_flag'
+      : 'server_default',
+  });
+
+  // 7. Provision resource
+  telemetry.trackCheckoutProvisioningStarted(marketplaceProps);
   output.spinner('Provisioning resource...');
   let result: AutoProvisionResult;
   try {
@@ -190,14 +219,24 @@ export async function addAutoProvision(
     );
   } catch (error) {
     output.stopSpinner();
+    telemetry.trackCheckoutProvisioningFailed(marketplaceProps);
     output.error((error as Error).message);
     return 1;
   }
   output.stopSpinner();
   output.debug(`Auto-provision result: ${JSON.stringify(result, null, 2)}`);
 
-  // 7. Handle non-provisioned responses (metadata, unknown)
+  // 8. Handle non-provisioned responses (metadata, unknown)
   if (result.kind !== 'provisioned') {
+    telemetry.trackInstallFlowWebFallback({
+      ...marketplaceProps,
+      reason:
+        result.kind === 'metadata'
+          ? 'metadata_required'
+          : (result.reason ?? 'server_fallback'),
+      auto_provision_result_kind: result.kind,
+      auto_provision_result_reason: result.reason,
+    });
     output.debug(`Fallback required - kind: ${result.kind}`);
     output.debug(`Fallback URL from API: ${result.url}`);
 
@@ -231,12 +270,27 @@ export async function addAutoProvision(
     return 1;
   }
 
-  // 8. Success!
+  // 9. Success!
+  if (result.kind !== 'provisioned') {
+    // Unreachable — all non-provisioned kinds are handled above.
+    // Guard exists so TypeScript narrows `result` without a type assertion.
+    return 1;
+  }
+  const provisioned = result;
+  telemetry.trackCheckoutProvisioningCompleted({
+    ...marketplaceProps,
+    resource_id: provisioned.resource.id,
+    resource_name: resourceName,
+  });
   output.debug(
-    `Provisioned resource: ${JSON.stringify(result.resource, null, 2)}`
+    `Provisioned resource: ${JSON.stringify(provisioned.resource, null, 2)}`
   );
-  output.debug(`Installation: ${JSON.stringify(result.installation, null, 2)}`);
-  output.debug(`Billing plan: ${JSON.stringify(result.billingPlan, null, 2)}`);
+  output.debug(
+    `Installation: ${JSON.stringify(provisioned.installation, null, 2)}`
+  );
+  output.debug(
+    `Billing plan: ${JSON.stringify(provisioned.billingPlan, null, 2)}`
+  );
   output.success(
     `${product.name} successfully provisioned: ${chalk.bold(resourceName)}`
   );
@@ -245,8 +299,17 @@ export async function addAutoProvision(
   return postProvisionSetup(
     client,
     resourceName,
-    result.resource.id,
+    provisioned.resource.id,
     contextName,
-    options
+    {
+      ...options,
+      onProjectConnected: (projectId: string) => {
+        telemetry.trackProjectConnected({
+          ...marketplaceProps,
+          project_id: projectId,
+          resource_id: provisioned.resource.id,
+        });
+      },
+    }
   );
 }

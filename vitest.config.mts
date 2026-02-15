@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     // Use of process.chdir prohibits usage of the default "threads". https://vitest.dev/config/#forks
     pool: 'forks',
+    setupFiles: ['./spy-setup.mts'],
     env: {
       // Vitest supresses color output when `process.env.CI` is true
       // so override that behavior
